@@ -86,7 +86,7 @@ export interface CompanyDetail {
 export type PluginFields = Partial<Pick<Plugin, "name" | "repo" | "description" | "instructions">>;
 
 /**
- * Talks to the admin API of a Silk Plugins Hub server. The admin token lives in Obsidian's
+ * Talks to the admin API of a Silk Hub server. The admin token lives in Obsidian's
  * SecretStorage; when the server rejects it, the client forgets it and reports the sign-out.
  */
 export class AdminClient {

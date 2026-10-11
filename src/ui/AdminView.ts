@@ -259,7 +259,7 @@ export class AdminView extends ItemView {
           b.setButtonText(t("remove")).onClick(() => {
             if (!armed) {
               armed = true;
-              b.setButtonText(t("removeConfirm")).setWarning();
+              b.setButtonText(t("removeConfirm")).setDestructive();
               window.setTimeout(() => {
                 armed = false;
                 b.setButtonText(t("remove")).buttonEl.removeClass("mod-warning", "mod-destructive");
@@ -296,7 +296,7 @@ export class AdminView extends ItemView {
         .addButton((b) =>
           b
             .setButtonText(t("delete"))
-            .setWarning()
+            .setDestructive()
             .onClick(async () => {
               const ok = await confirmAction(this.app, t("deleteCompany"), t("deleteCompanyConfirm", { name: company.name }), t("delete"));
               if (!ok) return;
@@ -481,7 +481,7 @@ export class AdminView extends ItemView {
         .addButton((b) =>
           b
             .setButtonText(t("delete"))
-            .setWarning()
+            .setDestructive()
             .onClick(async () => {
               const ok = await confirmAction(this.app, t("deletePlugin"), t("deletePluginConfirm", { name: plugin.name }), t("delete"));
               if (!ok) return;
@@ -510,7 +510,7 @@ export class AdminView extends ItemView {
     }
     s.addButton((b) => {
       b.setButtonText(r.revoked ? t("restore") : t("revoke"));
-      if (!r.revoked) b.setWarning();
+      if (!r.revoked) b.setDestructive();
       b.onClick(async () => {
         if (!r.revoked) {
           const ok = await confirmAction(this.app, t("revoke"), t("revokeConfirm", { version: r.version }), t("revoke"));

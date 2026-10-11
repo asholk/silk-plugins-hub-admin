@@ -1,7 +1,7 @@
 {
   "name": "silk-plugins-hub-admin",
-  "version": "0.1.0",
-  "description": "Obsidian plugin: administer a Silk Plugins Hub server — companies, users, plugins and releases",
+  "version": "0.2.0",
+  "description": "Obsidian plugin: administer a Silk Hub server — companies, users, plugins and releases",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",

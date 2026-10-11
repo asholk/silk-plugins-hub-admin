@@ -35,6 +35,19 @@ export interface User {
 
 export interface UserRow extends User {
   companyIds: number[];
+  /** Active sessions: vaults where the user is signed in. */
+  sessions: number;
+}
+
+export interface Admin {
+  username: string;
+  self: boolean;
+}
+
+/** A file for a release uploaded by hand: name and base64 contents. */
+export interface UploadFile {
+  name: string;
+  data: string;
 }
 
 export interface Plugin {
@@ -62,6 +75,7 @@ export interface Release {
   minAppVersion: string;
   revoked: boolean;
   changes: Change[];
+  files: { name: string; size: number }[];
 }
 
 export interface Doc {
@@ -134,7 +148,7 @@ export class AdminClient {
     return this.call("GET", `/admin-api/companies/${id}`);
   }
 
-  updateCompany(id: number, body: { name?: string; emailDomains?: string }): Promise<Company> {
+  updateCompany(id: number, body: { name?: string; slug?: string; emailDomains?: string }): Promise<Company> {
     return this.call("PATCH", `/admin-api/companies/${id}`, body);
   }
 
@@ -161,6 +175,34 @@ export class AdminClient {
 
   setUserCompanies(userId: number, companyIds: number[]): Promise<void> {
     return this.call("PUT", `/admin-api/users/${userId}/companies`, { companyIds });
+  }
+
+  /** Ends the user's sessions in every vault; returns how many ended. */
+  async signOutUser(userId: number): Promise<number> {
+    return (await this.call<{ ended: number }>("POST", `/admin-api/users/${userId}/sign-out`)).ended;
+  }
+
+  deleteUser(userId: number): Promise<void> {
+    return this.call("DELETE", `/admin-api/users/${userId}`);
+  }
+
+  // ---------- Administrators ----------
+  async admins(): Promise<Admin[]> {
+    return (await this.call<{ admins: Admin[] }>("GET", "/admin-api/admins")).admins;
+  }
+
+  createAdmin(username: string, password: string): Promise<void> {
+    return this.call("POST", "/admin-api/admins", { username, password });
+  }
+
+  deleteAdmin(username: string): Promise<void> {
+    return this.call("DELETE", `/admin-api/admins/${encodeURIComponent(username)}`);
+  }
+
+  /** Changes this admin's password; other sessions end and this one continues with a fresh token. */
+  async changePassword(current: string, password: string): Promise<void> {
+    const { token } = await this.call<{ token: string }>("POST", "/admin-api/me/password", { current, password });
+    this.app.secretStorage.setSecret(TOKEN_SECRET, token);
   }
 
   // ---------- Plugins ----------
@@ -190,6 +232,15 @@ export class AdminClient {
 
   setPluginCompanies(id: string, companies: Access[]): Promise<void> {
     return this.call("PUT", `/admin-api/plugins/${encodeURIComponent(id)}/companies`, { companies });
+  }
+
+  /** Publishes a release from files picked by the admin, without CI. */
+  uploadRelease(id: string, notes: string, files: UploadFile[]): Promise<{ version: string; files: string[] }> {
+    return this.call("POST", `/admin-api/plugins/${encodeURIComponent(id)}/releases`, { notes, files });
+  }
+
+  deleteRelease(id: string, version: string): Promise<void> {
+    return this.call("DELETE", `/admin-api/plugins/${encodeURIComponent(id)}/releases/${encodeURIComponent(version)}`);
   }
 
   setReleaseRevoked(id: string, version: string, revoked: boolean): Promise<void> {

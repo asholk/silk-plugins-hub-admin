@@ -4,9 +4,10 @@ Obsidian plugin for administrators of a [Silk Hub server](https://github.com/ash
 
 ## What you can do
 
-- **Companies**: create a company with a code that users enter in Silk Hub, set email domains for automatic membership, choose available and required plugins, add or remove users by email.
-- **Users**: see who signed in and choose the companies of each user.
-- **Plugins**: add a plugin, edit its description and instructions, issue a publish token for CI, set access per company, preview the card and guide, revoke or restore releases.
+- **Companies**: create a company with a code that users enter in Silk Hub, change its name, code and email domains for automatic membership, choose available and required plugins, add or remove users by email.
+- **Users**: see who signed in and on how many devices, choose the companies of each user, end their sessions or delete them.
+- **Plugins**: add a plugin, edit its description and instructions, issue a publish token for CI, set access per company, preview the card and guide, upload a release by hand, see its files, revoke, restore or delete releases.
+- **Administrators**: add and remove administrators, change your password.
 
 ## Requirements
 

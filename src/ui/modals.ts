@@ -30,6 +30,7 @@ export interface FormField {
   desc?: string;
   placeholder?: string;
   multiline?: boolean;
+  password?: boolean;
   required?: boolean;
 }
 
@@ -57,7 +58,8 @@ export class FormModal extends Modal {
       const setting = new Setting(contentEl).setName(field.name);
       if (field.desc) setting.setDesc(field.desc);
       const onChange = (v: string): void => {
-        this.values[field.key] = v.trim();
+        // Passwords are kept exactly as typed.
+        this.values[field.key] = field.password ? v : v.trim();
       };
       if (field.multiline) {
         setting.addTextArea((text) => {
@@ -68,6 +70,7 @@ export class FormModal extends Modal {
       } else {
         setting.addText((text) => {
           text.setPlaceholder(field.placeholder ?? "").onChange(onChange);
+          if (field.password) text.inputEl.type = "password";
           text.inputEl.addEventListener("keydown", (e) => {
             if (e.key === "Enter") void this.trySubmit(button);
           });
@@ -201,6 +204,77 @@ export class UserCompaniesModal extends Modal {
               this.close();
             } catch (err) {
               new Notice(t("failed", { error: (err as Error).message }));
+            }
+          }),
+      );
+  }
+}
+
+/** Base64 of a file's bytes, in chunks so large files don't overflow the call stack. */
+async function toBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
+/**
+ * Publishes a release from files the admin picks (desktop or mobile), without CI.
+ * `upload` gets the notes and the files; when it throws, the error is shown and the modal stays open.
+ */
+export class UploadReleaseModal extends Modal {
+  private files: File[] = [];
+  private notes = "";
+
+  constructor(
+    app: App,
+    pluginName: string,
+    private upload: (notes: string, files: { name: string; data: string }[]) => Promise<void>,
+  ) {
+    super(app);
+    this.setTitle(`${pluginName}: ${t("uploadRelease")}`);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.createEl("p", { cls: "silk-admin-muted", text: t("uploadReleaseDesc") });
+    const input = contentEl.createEl("input", { attr: { type: "file", multiple: "" } });
+    input.hide();
+    const picked = new Setting(contentEl).setName(t("releaseFiles")).setDesc(t("noFilesPicked"));
+    picked.addButton((b) => b.setButtonText(t("pickFiles")).onClick(() => input.click()));
+    input.addEventListener("change", () => {
+      this.files = Array.from(input.files ?? []);
+      picked.setDesc(this.files.length ? t("filesPicked", { list: this.files.map((f) => f.name).join(", ") }) : t("noFilesPicked"));
+    });
+    new Setting(contentEl)
+      .setName(t("releaseNotes"))
+      .setDesc(t("releaseNotesDesc"))
+      .addTextArea((text) => {
+        text.onChange((v) => (this.notes = v));
+        text.inputEl.rows = 4;
+      });
+    new Setting(contentEl)
+      .addButton((b) => b.setButtonText(t("cancel")).onClick(() => this.close()))
+      .addButton((b) =>
+        b
+          .setButtonText(t("upload"))
+          .setCta()
+          .onClick(async () => {
+            if (this.files.length === 0) return void new Notice(t("noFilesPicked"));
+            b.setDisabled(true);
+            try {
+              const files = await Promise.all(this.files.map(async (f) => ({ name: f.name, data: await toBase64(f) })));
+              // Each non-empty line becomes a changelog item, with or without a leading dash.
+              const items = this.notes
+                .split("\n")
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .map((line) => (/^[-*•]\s/.test(line) ? line : `- ${line}`));
+              await this.upload(items.length ? `Changelog:\n${items.join("\n")}` : "", files);
+              this.close();
+            } catch (err) {
+              new Notice(t("failed", { error: (err as Error).message }));
+              b.setDisabled(false);
             }
           }),
       );

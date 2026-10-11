@@ -2,18 +2,19 @@ import { Component, DropdownComponent, ItemView, MarkdownRenderer, Notice, setIc
 import type { Access, PluginRow, Release } from "../api/AdminClient";
 import { t, MessageKey } from "../i18n";
 import type SilkHubAdmin from "../main";
-import { confirmAction, FormModal, MarkdownModal, TokenModal, UserCompaniesModal } from "./modals";
+import { confirmAction, FormModal, MarkdownModal, TokenModal, UploadReleaseModal, UserCompaniesModal } from "./modals";
 
 export const ADMIN_VIEW = "silk-plugins-hub-admin";
 
-type Tab = "companies" | "users" | "plugins";
-type Route = { tab: "companies"; companyId?: number } | { tab: "users" } | { tab: "plugins"; pluginId?: string };
+type Tab = "companies" | "users" | "plugins" | "admins";
+type Route = { tab: "companies"; companyId?: number } | { tab: "users" } | { tab: "plugins"; pluginId?: string } | { tab: "admins" };
 type AccessLevel = "none" | "available" | "required";
 
 const TABS: { tab: Tab; label: MessageKey; icon: string }[] = [
   { tab: "companies", label: "companies", icon: "building-2" },
   { tab: "users", label: "users", icon: "users" },
   { tab: "plugins", label: "plugins", icon: "puzzle" },
+  { tab: "admins", label: "admins", icon: "user-cog" },
 ];
 
 const TYPE_LABELS: Record<string, MessageKey> = { new: "typeNew", improved: "typeImproved", fixed: "typeFixed" };
@@ -22,6 +23,9 @@ const levelOf = (access: { required: boolean } | undefined): AccessLevel =>
   !access ? "none" : access.required ? "required" : "available";
 
 const formatDate = (iso: string | null): string => (iso ? String(iso).slice(0, 16).replace("T", " ") : "");
+
+const formatSize = (bytes: number): string =>
+  bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
 /**
  * The admin panel in a workspace tab: companies, users and plugins of the Hub, each list leading to
@@ -113,6 +117,7 @@ export class AdminView extends ItemView {
     const r = this.route;
     if (r.tab === "companies") return r.companyId !== undefined ? this.renderCompany(el, r.companyId) : this.renderCompanies(el);
     if (r.tab === "users") return this.renderUsers(el);
+    if (r.tab === "admins") return this.renderAdmins(el);
     return r.pluginId !== undefined ? this.renderPlugin(el, r.pluginId) : this.renderPlugins(el);
   }
 
@@ -211,10 +216,16 @@ export class AdminView extends ItemView {
     this.backLink(el, t("companies"), { tab: "companies" });
     el.createEl("h2", { text: company.name });
 
-    // Name and domains are saved when the field loses focus.
+    // Code, name and domains are saved when the field loses focus.
     const general = new SettingGroup(el);
     general.addSetting((s) =>
-      void s.setName(t("companyCode")).setDesc(t("companyCodeDesc")).addText((text) => text.setValue(company.slug).setDisabled(true)),
+      void s.setName(t("companyCode")).setDesc(t("companyCodeDesc")).addText((text) => {
+        text.setValue(company.slug);
+        text.inputEl.addEventListener("change", () => {
+          const slug = text.getValue().trim().toLowerCase();
+          if (slug && slug !== company.slug) void this.act(() => client.updateCompany(company.id, { slug }), t("companyCodeChanged", { code: slug }));
+        });
+      }),
     );
     general.addSetting((s) =>
       void s.setName(t("companyName")).addText((text) => {
@@ -319,7 +330,8 @@ export class AdminView extends ItemView {
       const companyNames = u.companyIds.map((id) => names.get(id) ?? `#${id}`);
       group.addSetting((s) => {
         const status = u.signedIn ? t("userSince", { date: formatDate(u.createdAt) }) : t("userNeverSignedIn");
-        s.setName(u.email).setDesc([u.name, status].filter(Boolean).join(" · "));
+        const sessions = u.sessions > 0 ? t("userSessions", { n: u.sessions }) : "";
+        s.setName(u.email).setDesc([u.name, status, sessions].filter(Boolean).join(" · "));
         const chips = s.controlEl.createDiv({ cls: "silk-admin-chips" });
         if (companyNames.length === 0) chips.createSpan({ cls: "silk-admin-muted", text: t("noCompaniesShort") });
         for (const name of companyNames) chips.createSpan({ cls: "silk-admin-chip", text: name });
@@ -334,6 +346,28 @@ export class AdminView extends ItemView {
                 void this.render();
               }).open(),
             ),
+        );
+        if (u.sessions > 0) {
+          s.addExtraButton((b) =>
+            b
+              .setIcon("log-out")
+              .setTooltip(t("signOutUser"))
+              .onClick(async () => {
+                if (!(await confirmAction(this.app, t("signOutUser"), t("signOutUserConfirm", { email: u.email }), t("signOutUser")))) return;
+                let ended = 0;
+                await this.act(async () => (ended = await client.signOutUser(u.id)));
+                new Notice(t("sessionsEnded", { n: ended }));
+              }),
+          );
+        }
+        s.addExtraButton((b) =>
+          b
+            .setIcon("trash-2")
+            .setTooltip(t("deleteUser"))
+            .onClick(async () => {
+              if (!(await confirmAction(this.app, t("deleteUser"), t("deleteUserConfirm", { email: u.email }), t("delete")))) return;
+              await this.act(() => client.deleteUser(u.id), t("userDeleted", { email: u.email }));
+            }),
         );
         row(s, `${u.email} ${u.name} ${companyNames.join(" ")}`);
       });
@@ -471,6 +505,18 @@ export class AdminView extends ItemView {
     });
 
     const releaseGroup = new SettingGroup(el).setHeading(t("releases"));
+    releaseGroup.addExtraButton((b) =>
+      b
+        .setIcon("upload")
+        .setTooltip(t("uploadRelease"))
+        .onClick(() =>
+          new UploadReleaseModal(this.app, plugin.name, async (notes, files) => {
+            const { version } = await client.uploadRelease(plugin.id, notes, files);
+            new Notice(t("releaseUploaded", { version }));
+            void this.render();
+          }).open(),
+        ),
+    );
     if (detail.releases.length === 0) releaseGroup.addSetting((s) => void s.setDesc(t("noReleasesYet")));
     for (const r of detail.releases) releaseGroup.addSetting((s) => this.renderRelease(s, plugin.id, r));
 
@@ -499,6 +545,12 @@ export class AdminView extends ItemView {
     name.setText(r.version);
     if (r.revoked) name.createSpan({ cls: "silk-admin-chip mod-warning", text: t("revoked") });
     s.descEl.setText(t("releaseMeta", { date: formatDate(r.publishedAt), min: r.minAppVersion }));
+    if (r.files.length > 0) {
+      s.descEl.createDiv({
+        cls: "silk-admin-muted",
+        text: `${t("releaseFiles")}: ${r.files.map((f) => `${f.name} (${formatSize(f.size)})`).join(", ")}`,
+      });
+    }
     if (r.changes.length > 0) {
       const list = s.infoEl.createEl("ul", { cls: "silk-admin-changes" });
       for (const c of r.changes) {
@@ -522,6 +574,59 @@ export class AdminView extends ItemView {
         );
       });
     });
+    s.addExtraButton((b) =>
+      b
+        .setIcon("trash-2")
+        .setTooltip(t("deleteRelease"))
+        .onClick(async () => {
+          if (!(await confirmAction(this.app, t("deleteRelease"), t("deleteReleaseConfirm", { version: r.version }), t("delete")))) return;
+          await this.act(() => client.deleteRelease(pluginId, r.version), t("releaseDeleted", { version: r.version }));
+        }),
+    );
+  }
+
+  // ---------- Administrators ----------
+
+  private async renderAdmins(el: HTMLElement): Promise<void> {
+    const { client } = this.plugin;
+    const admins = await client.admins();
+    const { group, row } = this.listGroup(el, t("admins"), t("newAdmin"), () => this.createAdmin());
+    for (const a of admins) {
+      group.addSetting((s) => {
+        s.setName(a.username);
+        if (a.self) {
+          s.setDesc(t("adminYou")).addButton((b) => b.setButtonText(t("changePassword")).onClick(() => this.plugin.openChangePassword()));
+        } else {
+          s.addExtraButton((b) =>
+            b
+              .setIcon("trash-2")
+              .setTooltip(t("deleteAdmin"))
+              .onClick(async () => {
+                if (!(await confirmAction(this.app, t("deleteAdmin"), t("deleteAdminConfirm", { name: a.username }), t("delete")))) return;
+                await this.act(() => client.deleteAdmin(a.username), t("adminDeleted", { name: a.username }));
+              }),
+          );
+        }
+        row(s, a.username);
+      });
+    }
+  }
+
+  private createAdmin(): void {
+    new FormModal(
+      this.app,
+      t("newAdmin"),
+      [
+        { key: "username", name: t("adminLogin"), desc: t("adminLoginDesc"), required: true },
+        { key: "password", name: t("adminPassword"), desc: t("adminPasswordDesc"), required: true, password: true },
+      ],
+      t("newAdmin"),
+      async (v) => {
+        await this.plugin.client.createAdmin(v.username, v.password);
+        new Notice(t("adminCreated", { name: v.username }));
+        void this.render();
+      },
+    ).open();
   }
 }
 

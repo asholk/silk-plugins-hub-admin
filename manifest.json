@@ -1,0 +1,9 @@
+{
+  "id": "silk-plugins-hub-admin",
+  "name": "Silk Plugins Hub Admin",
+  "version": "0.1.0",
+  "minAppVersion": "1.11.4",
+  "description": "Administer a Silk Plugins Hub server: companies, users, plugins, access, publish tokens and releases.",
+  "author": "Alexander Shelkovov",
+  "isDesktopOnly": false
+}

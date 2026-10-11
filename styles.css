@@ -1,0 +1,135 @@
+.silk-admin > *,
+.silk-admin-body > div > :not(.setting-group) {
+  max-width: 700px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.silk-admin h2 {
+  margin-top: var(--size-4-2);
+}
+
+.silk-admin-muted {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.silk-admin-error {
+  color: var(--text-error);
+}
+
+.silk-admin-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  padding-bottom: var(--size-4-2);
+  margin-bottom: var(--size-4-3);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.silk-admin-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  padding: var(--size-4-1) var(--size-4-3);
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.silk-admin-nav-item:hover {
+  background-color: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.silk-admin-nav-item.is-active {
+  background-color: var(--background-modifier-active-hover);
+  color: var(--text-normal);
+}
+
+.silk-admin-nav-item .svg-icon {
+  width: var(--icon-s);
+  height: var(--icon-s);
+}
+
+.silk-admin-spacer {
+  flex: 1;
+}
+
+.silk-admin-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: var(--font-ui-small);
+}
+
+.silk-admin-back:hover {
+  color: var(--text-normal);
+}
+
+.silk-admin-row {
+  cursor: pointer;
+}
+
+.silk-admin-row:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.silk-admin-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-1);
+  justify-content: flex-end;
+}
+
+.silk-admin-chip {
+  display: inline-block;
+  padding: 0 var(--size-4-2);
+  border-radius: var(--radius-s);
+  background-color: var(--background-modifier-hover);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.silk-admin-chip.mod-warning {
+  color: var(--text-warning);
+}
+
+.setting-item-name .silk-admin-chip {
+  margin-left: var(--size-4-2);
+}
+
+.silk-admin-changes {
+  margin: var(--size-4-1) 0 0;
+  padding-left: var(--size-4-4);
+  font-size: var(--font-ui-small);
+}
+
+.silk-admin-changes li {
+  margin-bottom: var(--size-2-1);
+}
+
+.silk-admin-release .setting-item-info {
+  flex: 1 1 auto;
+}
+
+.silk-admin-doc-setting .setting-item-info {
+  width: 100%;
+}
+
+.silk-admin-doc img {
+  max-width: 100%;
+  border-radius: var(--radius-s);
+}
+
+.silk-admin-doc-modal {
+  width: min(800px, 90vw);
+}
+
+.silk-admin-secret {
+  font-family: var(--font-monospace);
+  width: 100%;
+}

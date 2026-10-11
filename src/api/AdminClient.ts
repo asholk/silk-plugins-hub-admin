@@ -164,6 +164,11 @@ export class AdminClient {
     return this.call("POST", `/admin-api/companies/${companyId}/members`, { email });
   }
 
+  /** Adds several people by email at once: a list or text separated by commas, spaces or new lines. */
+  addMembers(companyId: number, emails: string): Promise<{ added: User[]; invalid: string[] }> {
+    return this.call("POST", `/admin-api/companies/${companyId}/members`, { emails });
+  }
+
   removeMember(companyId: number, userId: number): Promise<void> {
     return this.call("DELETE", `/admin-api/companies/${companyId}/members/${userId}`);
   }

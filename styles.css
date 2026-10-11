@@ -133,3 +133,10 @@
   font-family: var(--font-monospace);
   width: 100%;
 }
+
+.silk-admin-required {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  margin-right: var(--size-4-3);
+}

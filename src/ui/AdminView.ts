@@ -1,8 +1,9 @@
-import { Component, DropdownComponent, ItemView, MarkdownRenderer, Notice, setIcon, Setting, SettingGroup, WorkspaceLeaf } from "obsidian";
-import type { Access, PluginRow, Release } from "../api/AdminClient";
+import { Component, ItemView, MarkdownRenderer, Notice, setIcon, Setting, SettingGroup, ToggleComponent, WorkspaceLeaf } from "obsidian";
+import type { Access, PluginRow, Release, User } from "../api/AdminClient";
 import { t, MessageKey } from "../i18n";
 import type SilkHubAdmin from "../main";
 import { confirmAction, FormModal, MarkdownModal, TokenModal, UploadReleaseModal, UserCompaniesModal } from "./modals";
+import { UserSuggest } from "./UserSuggest";
 
 export const ADMIN_VIEW = "silk-plugins-hub-admin";
 
@@ -34,6 +35,8 @@ const formatSize = (bytes: number): string =>
 export class AdminView extends ItemView {
   private route: Route = { tab: "companies" };
   private renderId = 0;
+  /** Quick saves run one after another, so the server always ends with the latest state. */
+  private saving: Promise<unknown> = Promise.resolve();
   private docs = new Component();
 
   constructor(
@@ -132,6 +135,25 @@ export class AdminView extends ItemView {
     await this.render();
   }
 
+  /**
+   * Saves a change without redrawing the page, so switches and fields stay where they are.
+   * Returns false when the server rejected it; the caller then puts the control back.
+   */
+  private save(action: () => Promise<unknown>, success?: string): Promise<boolean> {
+    const run = this.saving.then(async () => {
+      try {
+        await action();
+        if (success) new Notice(success);
+        return true;
+      } catch (err) {
+        new Notice(t("failed", { error: (err as Error).message }));
+        return false;
+      }
+    });
+    this.saving = run;
+    return run;
+  }
+
   private backLink(el: HTMLElement, label: string, route: Route): void {
     const back = el.createDiv({ cls: "silk-admin-back" });
     setIcon(back.createSpan(), "arrow-left");
@@ -165,13 +187,40 @@ export class AdminView extends ItemView {
     return { group, row };
   }
 
-  private accessDropdown(setting: Setting, level: AccessLevel, onChange: (level: AccessLevel) => void): void {
-    setting.addDropdown((d: DropdownComponent) =>
-      d
-        .addOptions({ none: t("accessNone"), available: t("accessAvailable"), required: t("accessRequired") })
-        .setValue(level)
-        .onChange((v) => onChange(v as AccessLevel)),
-    );
+  /**
+   * Access as switches: "available" on the right and, while available, "required" next to it.
+   * Each change is saved at once without redrawing; if the server rejects it, the switches go back.
+   */
+  private accessSwitches(setting: Setting, initial: AccessLevel, persist: (level: AccessLevel) => Promise<boolean>): void {
+    let level = initial;
+    let applying = false;
+    const requiredEl = setting.controlEl.createDiv({ cls: "silk-admin-required" });
+    requiredEl.createSpan({ cls: "silk-admin-muted", text: t("accessRequired").toLowerCase() });
+    const required = new ToggleComponent(requiredEl).setTooltip(t("accessRequiredDesc"));
+    let available!: ToggleComponent;
+    setting.addToggle((toggle) => (available = toggle.setTooltip(t("accessAvailable"))));
+
+    const show = (value: AccessLevel): void => {
+      applying = true;
+      available.setValue(value !== "none");
+      required.setValue(value === "required");
+      applying = false;
+      requiredEl.toggle(value !== "none");
+      setting.settingEl.toggleClass("is-available", value !== "none");
+    };
+    const change = async (next: AccessLevel): Promise<void> => {
+      if (applying || next === level) return;
+      const previous = level;
+      level = next;
+      show(next);
+      if (!(await persist(next))) {
+        level = previous;
+        show(previous);
+      }
+    };
+    available.onChange((on) => void change(on ? (required.getValue() ? "required" : "available") : "none"));
+    required.onChange((on) => void change(on ? "required" : "available"));
+    show(level);
   }
 
   // ---------- Companies ----------
@@ -211,10 +260,10 @@ export class AdminView extends ItemView {
 
   private async renderCompany(el: HTMLElement, companyId: number): Promise<void> {
     const { client } = this.plugin;
-    const [detail, plugins] = await Promise.all([client.company(companyId), client.plugins()]);
+    const [detail, plugins, allUsers] = await Promise.all([client.company(companyId), client.plugins(), client.users()]);
     const { company, members } = detail;
     this.backLink(el, t("companies"), { tab: "companies" });
-    el.createEl("h2", { text: company.name });
+    const title = el.createEl("h2", { text: company.name });
 
     // Code, name and domains are saved when the field loses focus.
     const general = new SettingGroup(el);
@@ -223,7 +272,11 @@ export class AdminView extends ItemView {
         text.setValue(company.slug);
         text.inputEl.addEventListener("change", () => {
           const slug = text.getValue().trim().toLowerCase();
-          if (slug && slug !== company.slug) void this.act(() => client.updateCompany(company.id, { slug }), t("companyCodeChanged", { code: slug }));
+          if (!slug || slug === company.slug) return;
+          void this.save(() => client.updateCompany(company.id, { slug }), t("companyCodeChanged", { code: slug })).then((ok) => {
+            if (ok) company.slug = slug;
+            else text.setValue(company.slug);
+          });
         });
       }),
     );
@@ -232,7 +285,11 @@ export class AdminView extends ItemView {
         text.setValue(company.name);
         text.inputEl.addEventListener("change", () => {
           const name = text.getValue().trim();
-          if (name && name !== company.name) void this.act(() => client.updateCompany(company.id, { name }), t("saved"));
+          if (!name || name === company.name) return;
+          void this.save(() => client.updateCompany(company.id, { name }), t("saved")).then((ok) => {
+            if (ok) title.setText((company.name = name));
+            else text.setValue(company.name);
+          });
         });
       }),
     );
@@ -240,7 +297,7 @@ export class AdminView extends ItemView {
       void s.setName(t("emailDomains")).setDesc(t("emailDomainsDesc")).addText((text) => {
         text.setPlaceholder("acme.ru, acme.com").setValue(company.emailDomains);
         text.inputEl.addEventListener("change", () =>
-          void this.act(() => client.updateCompany(company.id, { emailDomains: text.getValue() }), t("saved")),
+          void this.save(() => client.updateCompany(company.id, { emailDomains: text.getValue() }), t("saved")),
         );
       }),
     );
@@ -252,53 +309,21 @@ export class AdminView extends ItemView {
     for (const p of plugins) {
       pluginGroup.addSetting((s) => {
         s.setName(p.name).setDesc(p.id);
-        this.accessDropdown(s, levelOf(access.get(p.id)), (level) => {
+        this.accessSwitches(s, levelOf(access.get(p.id)), (level) => {
+          const before = access.get(p.id);
           if (level === "none") access.delete(p.id);
           else access.set(p.id, { id: p.id, required: level === "required" });
-          void this.act(() => client.setCompanyPlugins(company.id, [...access.values()] as Access[]), t("saved"));
+          // The whole list goes in each save; it's read when the save runs, so queued saves send the latest.
+          return this.save(() => client.setCompanyPlugins(company.id, [...access.values()] as Access[])).then((ok) => {
+            if (!ok && before) access.set(p.id, before);
+            else if (!ok) access.delete(p.id);
+            return ok;
+          });
         });
       });
     }
 
-    const memberGroup = new SettingGroup(el).setHeading(t("members", { n: members.length }));
-    if (members.length === 0) memberGroup.addSetting((s) => void s.setDesc(t("noMembers")));
-    for (const u of members) {
-      memberGroup.addSetting((s) => {
-        s.setName(u.email).setDesc([u.name, u.signedIn ? "" : t("userNeverSignedIn")].filter(Boolean).join(" · "));
-        s.addButton((b) => {
-          let armed = false;
-          b.setButtonText(t("remove")).onClick(() => {
-            if (!armed) {
-              armed = true;
-              b.setButtonText(t("removeConfirm")).setDestructive();
-              window.setTimeout(() => {
-                armed = false;
-                b.setButtonText(t("remove")).buttonEl.removeClass("mod-warning", "mod-destructive");
-              }, 4000);
-              return;
-            }
-            void this.act(() => client.removeMember(company.id, u.id));
-          });
-        });
-      });
-    }
-    memberGroup.addSetting((s) => {
-      let email = "";
-      const add = (): void => {
-        if (!email.trim()) return;
-        void this.act(() => client.addMember(company.id, email.trim()), t("memberAdded", { email: email.trim() }));
-      };
-      s.setName(t("addMember"))
-        .setDesc(t("addMemberDesc"))
-        .addText((text) => {
-          text.setPlaceholder("user@example.com").onChange((v) => (email = v));
-          text.inputEl.type = "email";
-          text.inputEl.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") add();
-          });
-        })
-        .addButton((b) => b.setIcon("user-plus").setTooltip(t("addMember")).onClick(add));
-    });
+    this.renderMembers(el, company.id, members, allUsers);
 
     new SettingGroup(el).addSetting((s) =>
       void s
@@ -316,6 +341,106 @@ export class AdminView extends ItemView {
             }),
         ),
     );
+  }
+
+  /**
+   * Members of a company. People are added in bulk (pasted emails) or picked from Hub users as you
+   * type; added and removed rows change in place, without redrawing the page.
+   */
+  private renderMembers(el: HTMLElement, companyId: number, initial: User[], allUsers: User[]): void {
+    const { client } = this.plugin;
+    const members = new Map(initial.map((u) => [u.id, u]));
+    const group = new SettingGroup(el).setHeading(t("members", { n: members.size }));
+    const heading = el.lastElementChild?.querySelector(".setting-group-heading, .setting-item-heading .setting-item-name, .setting-item-name");
+    const rows = new Map<number, HTMLElement>();
+    let emptyEl: HTMLElement | null = null;
+    const updateCount = (): void => {
+      heading?.setText(t("members", { n: members.size }));
+      emptyEl?.toggle(members.size === 0);
+    };
+
+    // Bulk add: paste a list of addresses.
+    group.addSetting((s) => {
+      s.setName(t("addMembers")).setDesc(t("addMembersDesc"));
+      s.settingEl.addClass("silk-admin-add-members");
+      let area!: HTMLTextAreaElement;
+      const add = async (): Promise<void> => {
+        const text = area.value.trim();
+        if (!text) return;
+        let result: { added: User[]; invalid: string[] } | null = null;
+        const ok = await this.save(async () => (result = await client.addMembers(companyId, text)));
+        if (!ok || !result) return;
+        const { added, invalid } = result as { added: User[]; invalid: string[] };
+        const fresh = added.filter((u) => !members.has(u.id));
+        for (const u of fresh) addRow(u);
+        area.value = invalid.join("\n");
+        new Notice(invalid.length ? t("membersAddedInvalid", { n: fresh.length, list: invalid.join(", ") }) : t("membersAdded", { n: fresh.length }));
+      };
+      s.addTextArea((text) => {
+        area = text.inputEl;
+        text.setPlaceholder("anna@example.com, boris@example.com");
+        area.rows = 2;
+        area.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void add();
+        });
+      });
+      s.addButton((b) => b.setButtonText(t("add")).setCta().onClick(() => void add()));
+    });
+
+    // Pick existing Hub users as you type.
+    group.addSetting((s) => {
+      s.setName(t("addFromHub")).setDesc(t("addFromHubDesc"));
+      s.addSearch((search) => {
+        search.setPlaceholder(t("searchUsers"));
+        new UserSuggest(this.app, search.inputEl, () => allUsers.filter((u) => !members.has(u.id))).onSelect((user) => {
+          void this.save(() => client.addMember(companyId, user.email), t("memberAdded", { email: user.email })).then((ok) => {
+            if (ok) addRow(user);
+          });
+        });
+      });
+    });
+
+    group.addSetting((s) => {
+      emptyEl = s.settingEl;
+      s.setDesc(t("noMembers"));
+    });
+
+    const addRow = (u: User): void => {
+      if (rows.has(u.id)) return;
+      members.set(u.id, u);
+      if (!allUsers.some((x) => x.id === u.id)) allUsers.push(u);
+      group.addSetting((s) => {
+        rows.set(u.id, s.settingEl);
+        s.setName(u.email).setDesc([u.name, u.signedIn ? "" : t("userNeverSignedIn")].filter(Boolean).join(" · "));
+        s.addButton((b) => {
+          let armed = false;
+          b.setButtonText(t("remove")).onClick(() => {
+            if (!armed) {
+              armed = true;
+              b.setButtonText(t("removeConfirm")).setDestructive();
+              window.setTimeout(() => {
+                armed = false;
+                b.setButtonText(t("remove")).buttonEl.removeClass("mod-warning", "mod-destructive");
+              }, 4000);
+              return;
+            }
+            void this.save(() => client.removeMember(companyId, u.id)).then((ok) => {
+              if (!ok) return;
+              members.delete(u.id);
+              rows.get(u.id)?.remove();
+              rows.delete(u.id);
+              updateCount();
+            });
+          });
+        });
+      });
+      updateCount();
+    };
+    for (const u of initial) {
+      members.delete(u.id);
+      addRow(u);
+    }
+    updateCount();
   }
 
   // ---------- Users ----------
@@ -420,17 +545,22 @@ export class AdminView extends ItemView {
     const [detail, companies] = await Promise.all([client.plugin(pluginId), client.companies()]);
     const { plugin } = detail;
     this.backLink(el, t("plugins"), { tab: "plugins" });
-    el.createEl("h2", { text: plugin.name });
+    const title = el.createEl("h2", { text: plugin.name });
 
-    // Text fields are saved when they lose focus.
+    // Text fields are saved when they lose focus, without redrawing the page.
     const general = new SettingGroup(el);
     const field = (key: "name" | "repo" | "description" | "instructions", name: string, desc?: string): void => {
       general.addSetting((s) => {
         s.setName(name);
         if (desc) s.setDesc(desc);
         const save = (value: string): void => {
-          if (value.trim() === plugin[key] || (key === "name" && !value.trim())) return;
-          void this.act(() => client.updatePlugin(plugin.id, { [key]: value }), t("saved"));
+          const next = value.trim();
+          if (next === plugin[key] || (key === "name" && !next)) return;
+          void this.save(() => client.updatePlugin(plugin.id, { [key]: next }), t("saved")).then((ok) => {
+            if (!ok) return;
+            plugin[key] = next;
+            if (key === "name") title.setText(next);
+          });
         };
         if (key === "instructions") {
           s.addTextArea((text) => {
@@ -478,10 +608,15 @@ export class AdminView extends ItemView {
     for (const c of companies) {
       accessGroup.addSetting((s) => {
         s.setName(c.name).setDesc(c.slug);
-        this.accessDropdown(s, levelOf(access.get(c.id)), (level) => {
+        this.accessSwitches(s, levelOf(access.get(c.id)), (level) => {
+          const before = access.get(c.id);
           if (level === "none") access.delete(c.id);
           else access.set(c.id, { id: c.id, required: level === "required" });
-          void this.act(() => client.setPluginCompanies(plugin.id, [...access.values()]), t("saved"));
+          return this.save(() => client.setPluginCompanies(plugin.id, [...access.values()])).then((ok) => {
+            if (!ok && before) access.set(c.id, before);
+            else if (!ok) access.delete(c.id);
+            return ok;
+          });
         });
       });
     }
